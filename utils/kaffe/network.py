@@ -50,11 +50,11 @@ class Network(object):
         assert len(args)!=0
         self.inputs = []
         for layer in args:
-            if isinstance(layer, basestring):
+            if isinstance(layer, str):
                 try:
                     layer = self.layers[layer]
                 except KeyError:
-                    print self.layers.keys()
+                    print (self.layers.keys())
                     raise KeyError('Unknown layer name fed: %s'%layer)
             self.inputs.append(layer)
         return self

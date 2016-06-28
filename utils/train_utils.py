@@ -7,9 +7,9 @@ import itertools
 from scipy.misc import imread, imresize
 import tensorflow as tf
 
-from data_utils import (annotation_jitter, annotation_to_h5)
+from utils.data_utils import (annotation_jitter, annotation_to_h5)
 from utils.annolist import AnnotationLib as al
-from rect import Rect
+from utils.rect import Rect
 
 def rescale_boxes(current_shape, anno, target_height, target_width):
     x_scale = target_width / float(current_shape[1])
@@ -29,6 +29,7 @@ def load_idl_tf(idlfile, H, jitter):
     that is mean corrected."""
 
     annolist = al.parse(idlfile)
+
     annos = []
     for anno in annolist:
         anno.imageName = os.path.join(
@@ -37,7 +38,7 @@ def load_idl_tf(idlfile, H, jitter):
     random.seed(0)
     if H['data']['truncate_data']:
         annos = annos[:10]
-    for epoch in itertools.count():
+    for epoch in itertools.count():        
         random.shuffle(annos)
         for anno in annos:
             I = imread(anno.imageName)
@@ -120,21 +121,19 @@ def add_rectangles(H, orig_image, confidences, boxes, use_stitching=False, rnn_l
 
     all_rects_r = [r for row in all_rects for cell in row for r in cell]
     if use_stitching:
-        from stitch_wrapper import stitch_rects
+        from utils.stitch_wrapper import stitch_rects
         acc_rects = stitch_rects(all_rects, tau)
     else:
         acc_rects = all_rects_r
-
 
     pairs = [(all_rects_r, (255, 0, 0)), (acc_rects, (0, 255, 0))]
     for rect_set, color in pairs:
         for rect in rect_set:
             if rect.confidence > min_conf:
                 cv2.rectangle(image,
-                    (rect.cx-int(rect.width/2), rect.cy-int(rect.height/2)),
-                    (rect.cx+int(rect.width/2), rect.cy+int(rect.height/2)),
-                    color,
-                    2)
+                    (round(rect.cx-int(rect.width/2)), round(rect.cy-int(rect.height/2))), #comment by A.C. the previous code was throwing, openvcv TypeError: integer argument expected, got float
+                    (round(rect.cx+int(rect.width/2)), round(rect.cy+int(rect.height/2))),
+                    color, 2)
 
     rects = []
     for rect in acc_rects:

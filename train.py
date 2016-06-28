@@ -9,15 +9,13 @@ import os
 from scipy import misc
 import tensorflow as tf
 import numpy as np
-try:
-    from tensorflow.models.rnn import rnn_cell
-except ImportError:
-    rnn_cell = tf.nn.rnn_cell
+
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 
-random.seed(0)
-np.random.seed(0)
+from utils.data_utils import (annotation_jitter, annotation_to_h5)
+from utils.annolist import AnnotationLib as al
+from utils.rect import Rect
 
 from utils import train_utils, googlenet_load
 
@@ -29,9 +27,9 @@ def build_lstm_inner(H, lstm_input):
     '''
     build lstm decoder
     '''
-    lstm_cell = rnn_cell.BasicLSTMCell(H['lstm_size'], forget_bias=0.0)
+    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(H['lstm_size'], forget_bias=0.0)
     if H['num_lstm_layers'] > 1:
-        lstm = rnn_cell.MultiRNNCell([lstm_cell] * H['num_lstm_layers'])
+        lstm = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * H['num_lstm_layers'])
     else:
         lstm = lstm_cell
 
@@ -435,9 +433,13 @@ def train(H, test_images):
         return {x_in: d['image'], confs_in: d['confs'], boxes_in: d['boxes'],
                 learning_rate: H['solver']['learning_rate']}
 
-    def thread_loop(sess, enqueue_op, phase, gen):
+    def my_loop(coord, sess, enqueue_op, phase, gen):
         for d in gen:
-            sess.run(enqueue_op[phase], feed_dict=make_feed(d))
+            try:
+                sess.run(enqueue_op[phase], feed_dict=make_feed(d))
+            except tf.errors.CancelledError:
+                print('Cancelling data input queues\n')
+                break
 
     (config, loss, accuracy, summary_op, train_op,
      smooth_op, global_step, learning_rate, encoder_net) = build(H, q)
@@ -447,16 +449,16 @@ def train(H, test_images):
         logdir=H['save_dir'],
         flush_secs=10
     )
-
+    coord = tf.train.Coordinator()
     with tf.Session(config=config) as sess:
         tf.train.start_queue_runners(sess=sess)
         for phase in ['train', 'test']:
             # enqueue once manually to avoid thread start delay
             gen = train_utils.load_data_gen(H, phase, jitter=H['solver']['use_jitter'])
-            d = gen.next()
+            d = next(gen)
             sess.run(enqueue_op[phase], feed_dict=make_feed(d))
-            t = tf.train.threading.Thread(target=thread_loop,
-                                          args=(sess, enqueue_op, phase, gen))
+            t = tf.train.threading.Thread(target=my_loop,
+                                          args=(coord, sess, enqueue_op, phase, gen))
             t.daemon = True
             t.start()
 
@@ -470,8 +472,10 @@ def train(H, test_images):
 
         # train model for N iterations
         start = time.time()
-        max_iter = H['solver'].get('max_iter', 10000000)
-        for i in xrange(max_iter):
+        max_iter = H['solver'].get('max_iter', 100000) # #of iterations
+        for i in range(max_iter):
+            if coord.should_stop():
+                break
             display_iter = H['logging']['display_iter']
             adjusted_lr = (H['solver']['learning_rate'] *
                            0.5 ** max(0, (i / H['solver']['learning_rate_step']) - 2))
@@ -490,13 +494,7 @@ def train(H, test_images):
                                       summary_op, train_op, smooth_op,
                                      ], feed_dict=lr_feed)
                 writer.add_summary(summary_str, global_step=global_step.eval())
-                print_str = string.join([
-                    'Step: %d',
-                    'lr: %f',
-                    'Train Loss: %.2f',
-                    'Test Accuracy: %.1f%%',
-                    'Time/image (ms): %.1f'
-                ], ', ')
+                print_str = 'Step: %d, lr: %f, Train Loss: %.2f, Test Accuracy: %.1f%%, Time/image(ms): %.1f '
                 print(print_str %
                       (i, adjusted_lr, train_loss,
                        test_accuracy * 100, dt * 1000 if i > 0 else 0))

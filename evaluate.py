@@ -4,14 +4,70 @@ import json
 import subprocess
 from scipy.misc import imread, imresize
 from scipy import misc
-
-from train import build_forward
+import numpy as np
+from train import build_forward_backward
 from utils import googlenet_load
 from utils.annolist import AnnotationLib as al
 from utils.train_utils import add_rectangles, rescale_boxes
+from utils.rect import Rect
 
 import cv2
 import argparse
+
+
+def add_rectangles(H, orig_image, confidences, boxes, arch, use_stitching=False, rnn_len=1, min_conf=0.5, tau=0.25):
+
+    image = np.copy(orig_image[0])
+    boxes_r = np.reshape(boxes, (-1,
+                                 arch["grid_height"],
+                                 arch["grid_width"],
+                                 rnn_len,
+                                 4))
+    confidences_r = np.reshape(confidences, (-1,
+                                             arch["grid_height"],
+                                             arch["grid_width"],
+                                             rnn_len,
+                                             2))
+    cell_pix_size = H['arch']['region_size']
+    all_rects = [[[] for _ in range(arch["grid_width"])] for _ in range(arch["grid_height"])]
+    for n in range(0, H['arch']['rnn_len']):
+        for y in range(arch["grid_height"]):
+            for x in range(arch["grid_width"]):
+                bbox = boxes_r[0, y, x, n, :]
+                conf = confidences_r[0, y, x, n, 1]
+                abs_cx = int(bbox[0]) + cell_pix_size/2 + cell_pix_size * x
+                abs_cy = int(bbox[1]) + cell_pix_size/2 + cell_pix_size * y
+                h = max(1, bbox[3])
+                w = max(1, bbox[2])
+                #w = h * 0.4
+                all_rects[y][x].append(Rect(abs_cx,abs_cy,w,h,conf))
+
+    if use_stitching:
+        from utils.stitch_wrapper import stitch_rects
+        acc_rects = stitch_rects(all_rects, tau)
+    else:
+        acc_rects = [r for row in all_rects for cell in row for r in cell if r.confidence > 0.1]
+
+
+    for rect in acc_rects:
+        if rect.confidence > min_conf:
+            cv2.rectangle(image,
+                (rect.cx-int(rect.width/2), rect.cy-int(rect.height/2)),
+                (rect.cx+int(rect.width/2), rect.cy+int(rect.height/2)),
+                (0,255,0),
+                2)
+
+    rects = []
+    for rect in acc_rects:
+        r = al.AnnoRect()
+        r.x1 = rect.cx - rect.width/2.
+        r.x2 = rect.cx + rect.width/2.
+        r.y1 = rect.cy - rect.height/2.
+        r.y2 = rect.cy + rect.height/2.
+        r.score = rect.true_confidence
+        rects.append(r)
+
+    return image, rects
 
 def get_image_dir(args):
     weights_iteration = int(args.weights.split('-')[-1])

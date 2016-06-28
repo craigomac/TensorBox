@@ -1,7 +1,9 @@
 import tensorflow as tf
-from kaffe import mynet
+from utils.kaffe import mynet
 import os
 import numpy as np
+from google.protobuf import text_format
+from tensorflow.core.framework import graph_pb2
 
 def init(H, config=None):
     if config is None:
@@ -19,11 +21,12 @@ def init(H, config=None):
     dense_layer_num_output = [k, 4]
 
     googlenet_graph = tf.Graph()
-    graph_def = tf.GraphDef()
+    graph_def = graph_pb2.GraphDef()
     tf.set_random_seed(0)
-    with open(graph_def_orig_file) as f:
+    with open(graph_def_orig_file, "rb") as f:
         tf.set_random_seed(0)
-        graph_def.MergeFromString(f.read())
+        #graph_def.MergeFromString(str(f.read()))
+        graph_def.ParseFromString(f.read())
 
     with googlenet_graph.as_default():
         tf.import_graph_def(graph_def, name='')
@@ -69,15 +72,15 @@ def init(H, config=None):
 
     weight_vars = {
         name: tf.Variable(weight, name=name)
-        for name, weight in weights_orig.iteritems()
+        for name, weight in list(weights_orig.items())
     }
 
     weight_tensors = {
         name: tf.convert_to_tensor(weight)
-        for name, weight in weight_vars.iteritems()
+        for name, weight in list(weight_vars.items())
     }
 
-    W_norm = [tf.nn.l2_loss(weight) for weight in weight_vars.values() + W]
+    W_norm = [tf.nn.l2_loss(weight) for weight in list(weight_vars.values()) + W]
     W_norm = tf.reduce_sum(tf.pack(W_norm), name='weights_norm')
     tf.scalar_summary(W_norm.op.name, W_norm)
 

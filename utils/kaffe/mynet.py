@@ -1,4 +1,4 @@
-from network import Network
+from utils.kaffe.network import Network
 
 class VGG(Network):
     def setup(self):
